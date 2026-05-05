@@ -81,7 +81,7 @@ def get_latest_post(session):
 
 # ---------------- DB ----------------
 def get_last_post(supabase):
-    res = supabase.table("blog_posts") \
+    res = supabase.table("blog_monitor") \
         .select("*") \
         .order("created_at", desc=True) \
         .limit(1) \
@@ -90,7 +90,7 @@ def get_last_post(supabase):
     return res.data[0] if res.data else None
 
 def save_post(supabase, post):
-    supabase.table("blog_posts").insert(post).execute()
+    supabase.table("blog_monitor").insert(post).execute()
 
 # ---------------- EMAIL ----------------
 def send_email(post):
