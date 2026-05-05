@@ -2,7 +2,8 @@ name: Blog Checker
 
 on:
   schedule:
-    - cron: "*/15 11-2 * * *"   # cada 15 minutos
+    - cron: "*/15 11-23 * * *"
+    - cron: "*/15 0-2 * * *"
   workflow_dispatch:
 
 jobs:
