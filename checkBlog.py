@@ -6,16 +6,13 @@ import smtplib
 from email.mime.text import MIMEText
 import os
 import sys
-from supabase import create_client, Client
+import json
+import hashlib
+from supabase import create_client
 
-# ---------------- CONFIG (desde ENV) ----------------
-USE_LOGIN = True
-
+# ---------------- CONFIG ----------------
 LOGIN_URL = "http://www.algieba.cl/blogCiin/validarLogin.php"
 BLOG_URL = "http://www.algieba.cl/blogCiin/"
-
-USER = os.getenv("BLOG_USER")
-PASSWORD = os.getenv("BLOG_PASS")
 
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
@@ -24,39 +21,55 @@ EMAIL_TO = os.getenv("EMAIL_TO")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# ---------------- HEADERS ----------------
 HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
-# ---------------- SUPABASE ----------------
-def get_supabase() -> Client:
+# ---------------- UTILS ----------------
+def log(msg):
+    print(msg, flush=True)
+
+def get_users():
+    raw = os.getenv("BLOG_USERS_JSON")
+    if not raw:
+        raise Exception("Falta variable BLOG_USERS_JSON")
+    return json.loads(raw)
+
+def get_supabase():
     if not SUPABASE_URL or not SUPABASE_KEY:
-        raise Exception("Faltan variables de entorno de Supabase")
+        raise Exception("Faltan variables de Supabase")
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
+def generate_hash(post, user):
+    raw = f"{user}-{post['fecha_autor']}-{post['contenido']}"
+    return hashlib.md5(raw.encode()).hexdigest()
+
 # ---------------- LOGIN ----------------
-def get_session():
+def get_session(user, password):
     s = requests.Session()
     s.headers.update(HEADERS)
 
-    if not USE_LOGIN:
-        return s
-
     payload = {
-        "loginUsuario": USER,
-        "claveUsuario": PASSWORD,
+        "loginUsuario": user,
+        "claveUsuario": password,
         "ingresarUsuario": "Ingresar"
     }
 
-    r = s.post(LOGIN_URL, data=payload, timeout=15)
+    try:
+        s.post(LOGIN_URL, data=payload, timeout=15)
+    except Exception as e:
+        raise Exception(f"Error login {user}: {e}")
+
     return s
 
 # ---------------- SCRAP ----------------
 def get_latest_post(session):
-    res = session.get(BLOG_URL, timeout=15)
-    res.encoding = res.apparent_encoding or "utf-8"
+    try:
+        res = session.get(BLOG_URL, timeout=15)
+    except Exception as e:
+        raise Exception(f"Error al cargar blog: {e}")
 
+    res.encoding = res.apparent_encoding or "utf-8"
     soup = BeautifulSoup(res.text, "html.parser")
 
     cont = soup.find(id="ajaxDivNoticias")
@@ -80,23 +93,35 @@ def get_latest_post(session):
     }
 
 # ---------------- DB ----------------
-def get_last_post(supabase):
-    res = supabase.table("blog_monitor") \
-        .select("*") \
-        .order("created_at", desc=True) \
-        .limit(1) \
-        .execute()
+def save_post(supabase, post, user, name):
+    post_data = {
+        "fecha_autor": post["fecha_autor"],
+        "contenido": post["contenido"],
+        "link": post["link"],
+        "blog_user": user,
+        "blog_name": name,
+        "hash": generate_hash(post, user)
+    }
 
-    return res.data[0] if res.data else None
+    try:
+        supabase.table("blog_monitor").upsert(
+            post_data,
+            on_conflict="hash"
+        ).execute()
 
-def save_post(supabase, post):
-    supabase.table("blog_monitor").insert(post).execute()
+        log(f"💾 Guardado en DB ({name})")
+        return True
+
+    except Exception as e:
+        log(f"🔴 Error DB ({name}): {e}")
+        return False
 
 # ---------------- EMAIL ----------------
-def send_email(post):
+def send_email(post, user, name):
     cuerpo = f"""
-📰 Nuevo post detectado
+📰 Nuevo post - {name}
 
+👤 Usuario: {user}
 📅 {post['fecha_autor']}
 
 {post['contenido']}
@@ -105,46 +130,58 @@ def send_email(post):
 """
 
     msg = MIMEText(cuerpo)
-    msg["Subject"] = "Nuevo post Blog CIIN"
+    msg["Subject"] = f"📰 Nuevo post - {name}"
     msg["From"] = EMAIL_USER
     msg["To"] = EMAIL_TO
 
-    with smtplib.SMTP("smtp.gmail.com", 587) as server:
-        server.starttls()
-        server.login(EMAIL_USER, EMAIL_PASS)
-        server.send_message(msg)
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(EMAIL_USER, EMAIL_PASS)
+            server.send_message(msg)
 
-    print("📩 Email enviado")
+        log(f"📩 Email enviado ({name})")
+
+    except Exception as e:
+        log(f"🔴 Error enviando email ({name}): {e}")
 
 # ---------------- MAIN ----------------
 def main():
-    print("🚀 Iniciando chequeo...")
+    log("🚀 Iniciando chequeo multi-usuario")
 
-    session = get_session()
     supabase = get_supabase()
+    users = get_users()
 
-    latest = get_latest_post(session)
-    last_saved = get_last_post(supabase)
+    for u in users:
+        user = u["user"]
+        password = u["pass"]
+        name = u.get("name", user)
 
-    print("🆕 Último detectado:", latest["fecha_autor"])
+        log(f"\n👤 Procesando: {name}")
 
-    if not last_saved:
-        print("⚠️ No hay registros previos → guardando primero")
-        save_post(supabase, latest)
-        send_email(latest)
-        return
+        try:
+            session = get_session(user, password)
+            latest = get_latest_post(session)
 
-    if latest["fecha_autor"] != last_saved["fecha_autor"]:
-        print("🔥 Nuevo post encontrado!")
-        save_post(supabase, latest)
-        send_email(latest)
-    else:
-        print("✅ Sin cambios")
+            log(f"🆕 Detectado: {latest['fecha_autor']}")
+
+            inserted = save_post(supabase, latest, user, name)
+
+            if inserted:
+                send_email(latest, user, name)
+            else:
+                log(f"✅ Sin cambios ({name})")
+
+        except Exception as e:
+            log(f"🔴 Error en {name}: {e}")
+            continue
+
+    log("\n🏁 Proceso finalizado")
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print("🔴 ERROR:", e)
+        print("🔥 ERROR CRÍTICO:", e)
         sys.exit(1)

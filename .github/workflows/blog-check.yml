@@ -11,8 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      BLOG_USER: ${{ vars.BLOG_USER }}
-      BLOG_PASS: ${{ secrets.BLOG_PASS }}
+      BLOG_USERS_JSON: ${{ secrets.BLOG_USERS_JSON }}
       EMAIL_USER: ${{ vars.EMAIL_USER }}
       EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
       EMAIL_TO: ${{ vars.EMAIL_TO }}
