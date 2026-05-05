@@ -5,11 +5,10 @@ from bs4 import BeautifulSoup
 import smtplib
 from email.mime.text import MIMEText
 import os
-from datetime import datetime
-import pytz
-from supabase import create_client
+import sys
+from supabase import create_client, Client
 
-# ---------------- CONFIG ----------------
+# ---------------- CONFIG (desde ENV) ----------------
 USE_LOGIN = True
 
 LOGIN_URL = "http://www.algieba.cl/blogCiin/validarLogin.php"
@@ -25,21 +24,19 @@ EMAIL_TO = os.getenv("EMAIL_TO")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+# ---------------- HEADERS ----------------
 HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
-# ---------------- INIT ----------------
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# ---------------- HORARIO ----------------
-def is_valid_time():
-    tz = pytz.timezone("America/Santiago")
-    hora = datetime.now(tz).hour
-    return 7 <= hora < 22
+# ---------------- SUPABASE ----------------
+def get_supabase() -> Client:
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise Exception("Faltan variables de entorno de Supabase")
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ---------------- LOGIN ----------------
-def get_logged_session():
+def get_session():
     s = requests.Session()
     s.headers.update(HEADERS)
 
@@ -52,76 +49,63 @@ def get_logged_session():
         "ingresarUsuario": "Ingresar"
     }
 
-    print("🔐 Haciendo login...")
-    s.post(LOGIN_URL, data=payload, timeout=15)
-
+    r = s.post(LOGIN_URL, data=payload, timeout=15)
     return s
 
 # ---------------- SCRAP ----------------
 def get_latest_post(session):
-    print("🌐 Consultando blog...")
-
     res = session.get(BLOG_URL, timeout=15)
     res.encoding = res.apparent_encoding or "utf-8"
 
     soup = BeautifulSoup(res.text, "html.parser")
 
-    noticias = soup.find_all("div", id="divNoticia")
+    cont = soup.find(id="ajaxDivNoticias")
+    noticias = cont.find_all(id="divNoticia") if cont else soup.find_all("div", id="divNoticia")
 
     if not noticias:
-        raise Exception("❌ No se encontraron noticias")
+        raise Exception("No se encontraron noticias")
 
     latest = noticias[0]
 
-    fecha_tag = latest.find("b")
-    contenido_tag = latest.find("p")
+    fecha = latest.find("b").get_text(strip=True) if latest.find("b") else ""
+    contenido = latest.find("p").get_text(strip=True) if latest.find("p") else latest.get_text(" ", strip=True)
 
-    fecha_autor = fecha_tag.get_text(strip=True) if fecha_tag else "Sin fecha"
-    contenido = contenido_tag.get_text(strip=True) if contenido_tag else latest.get_text(strip=True)
+    a_tag = latest.find("a", href=True)
+    link = a_tag["href"] if a_tag else BLOG_URL
 
     return {
-        "fecha_autor": fecha_autor,
-        "contenido": contenido
+        "fecha_autor": fecha,
+        "contenido": contenido,
+        "link": link
     }
 
-# ---------------- SUPABASE ----------------
-def get_last_post():
-    print("📦 Consultando último registro en Supabase...")
-
-    res = supabase.table("blog_monitor") \
+# ---------------- DB ----------------
+def get_last_post(supabase):
+    res = supabase.table("blog_posts") \
         .select("*") \
         .order("created_at", desc=True) \
         .limit(1) \
         .execute()
 
-    if res.data:
-        return res.data[0]
+    return res.data[0] if res.data else None
 
-    return None
-
-
-def save_post(post):
-    print("💾 Guardando nuevo post en Supabase...")
-
-    supabase.table("blog_monitor").insert({
-        "fecha_autor": post["fecha_autor"],
-        "contenido": post["contenido"]
-    }).execute()
+def save_post(supabase, post):
+    supabase.table("blog_posts").insert(post).execute()
 
 # ---------------- EMAIL ----------------
 def send_email(post):
-    print("📧 Enviando correo...")
-
     cuerpo = f"""
-📰 Nueva publicación en el Blog CIIN
+📰 Nuevo post detectado
 
 📅 {post['fecha_autor']}
 
-🗞️ {post['contenido']}
+{post['contenido']}
+
+🔗 {post['link']}
 """
 
     msg = MIMEText(cuerpo)
-    msg["Subject"] = "Nuevo post en el Blog CIIN"
+    msg["Subject"] = "Nuevo post Blog CIIN"
     msg["From"] = EMAIL_USER
     msg["To"] = EMAIL_TO
 
@@ -130,36 +114,30 @@ def send_email(post):
         server.login(EMAIL_USER, EMAIL_PASS)
         server.send_message(msg)
 
+    print("📩 Email enviado")
+
 # ---------------- MAIN ----------------
 def main():
-    print("🚀 Iniciando ejecución...")
+    print("🚀 Iniciando chequeo...")
 
-    # ⏰ Validar horario
-    if not is_valid_time():
-        print("⏰ Fuera de horario (07:00 - 22:00 Chile)")
-        return
+    session = get_session()
+    supabase = get_supabase()
 
-    # 🔐 Login
-    session = get_logged_session()
-
-    # 📰 Obtener último post
     latest = get_latest_post(session)
+    last_saved = get_last_post(supabase)
 
-    print(f"📌 Último encontrado: {latest['fecha_autor']}")
+    print("🆕 Último detectado:", latest["fecha_autor"])
 
-    # 📦 Obtener último guardado
-    last = get_last_post()
-
-    if not last:
-        print("🆕 Primera ejecución → se envía correo")
+    if not last_saved:
+        print("⚠️ No hay registros previos → guardando primero")
+        save_post(supabase, latest)
         send_email(latest)
-        save_post(latest)
         return
 
-    if latest["fecha_autor"] != last["fecha_autor"]:
-        print("🔥 Nuevo post detectado!")
+    if latest["fecha_autor"] != last_saved["fecha_autor"]:
+        print("🔥 Nuevo post encontrado!")
+        save_post(supabase, latest)
         send_email(latest)
-        save_post(latest)
     else:
         print("✅ Sin cambios")
 
@@ -168,5 +146,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print("\n🔴 ERROR:", e)
-        exit(1)
+        print("🔴 ERROR:", e)
+        sys.exit(1)
