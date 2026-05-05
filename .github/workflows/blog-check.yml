@@ -1,0 +1,32 @@
+name: Blog Checker
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # cada 15 minutos
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    env:
+      BLOG_USER: ${{ vars.BLOG_USER }}
+      BLOG_PASS: ${{ secrets.BLOG_PASS }}
+      EMAIL_USER: ${{ vars.EMAIL_USER }}
+      EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+      EMAIL_TO: ${{ vars.EMAIL_TO }}
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 pytz supabase
+
+      - name: Run script
+        run: python checkBlog.py
