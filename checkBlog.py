@@ -41,8 +41,8 @@ def get_supabase():
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def generate_hash(post, user):
-    raw = f"{user}-{post['fecha_autor']}-{post['contenido']}"
-    return hashlib.md5(raw.encode()).hexdigest()
+    raw = f"{user}-{post['fecha_autor']}-{post['contenido'][:100]}"
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 # ---------------- LOGIN ----------------
 def get_session(user, password):
@@ -99,23 +99,31 @@ def save_post(supabase, post, user, name):
         "contenido": post["contenido"],
         "link": post["link"],
         "blog_user": user,
-        "blog_name": name,
         "hash": generate_hash(post, user)
     }
 
-    try:
-        supabase.table("blog_monitor").upsert(
-            post_data,
-            on_conflict="hash"
-        ).execute()
+    # SOLO si agregaste la columna
+    post_data["blog_name"] = name
 
-        log(f"💾 Guardado en DB ({name})")
-        return True
+    try:
+        response = supabase.table("blog_monitor") \
+            .upsert(post_data, on_conflict="hash") \
+            .execute()
+
+        log(f"📦 Supabase response: {response}")
+
+        # 🔥 FIX: detectar insert real
+        if response.data:
+            log(f"💾 Insertado nuevo post ({name})")
+            return True
+        else:
+            log(f"🔁 Ya existía (hash duplicado) ({name})")
+            return False
 
     except Exception as e:
         log(f"🔴 Error DB ({name}): {e}")
         return False
-
+    
 # ---------------- EMAIL ----------------
 def send_email(post, user, name):
     cuerpo = f"""
