@@ -102,33 +102,28 @@ def get_latest_post(session):
 def save_post(supabase, post, user, name):
     hash_value = generate_hash(post, user)
 
-    # 1. 🔍 Verificar si ya existe
-    existing = supabase.table("blog_monitor") \
-        .select("id") \
-        .eq("hash", hash_value) \
-        .limit(1) \
-        .execute()
-
-    if existing.data:
-        log(f"🔁 Ya existe en DB ({name})")
-        return False
-
-    # 2. 💾 Insertar si NO existe
     post_data = {
         "fecha_autor": post["fecha_autor"],
         "contenido": post["contenido"],
         "link": post["link"],
         "blog_user": user,
-        "blog_name": name,  # asegúrate que exista en DB
+        "blog_name": name,
         "hash": hash_value
     }
 
     try:
         supabase.table("blog_monitor").insert(post_data).execute()
+
         log(f"💾 Insertado nuevo post ({name})")
-        return True
+        return True  # 👉 SOLO aquí envías mail
 
     except Exception as e:
+        error_str = str(e).lower()
+
+        if "duplicate key" in error_str or "unique constraint" in error_str:
+            log(f"🔁 Ya existía (hash duplicado) ({name})")
+            return False
+
         log(f"🔴 Error DB ({name}): {e}")
         return False
     
