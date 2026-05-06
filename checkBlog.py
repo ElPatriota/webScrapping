@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import hashlib
+import re
 from supabase import create_client
 
 # ---------------- CONFIG ----------------
@@ -40,14 +41,14 @@ def get_supabase():
         raise Exception("Faltan variables de Supabase")
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def normalize_text(text):
-    return " ".join(text.strip().lower().split())
+def normalize_fecha(fecha):
+    fecha = fecha.lower().strip()
+    fecha = re.sub(r"\s+", " ", fecha)
+    return fecha
 
 def generate_hash(post, user):
-    fecha = normalize_text(post["fecha_autor"])
-    contenido = normalize_text(post["contenido"])
-
-    raw = f"{user}-{fecha}-{contenido}"
+    fecha = normalize_fecha(post["fecha_autor"])
+    raw = f"{user}-{fecha}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 # ---------------- LOGIN ----------------
@@ -107,26 +108,24 @@ def save_post(supabase, post, user, name):
         "contenido": post["contenido"],
         "link": post["link"],
         "blog_user": user,
-        "blog_name": name,
         "hash": hash_value
     }
 
     try:
         supabase.table("blog_monitor").insert(post_data).execute()
-
         log(f"💾 Insertado nuevo post ({name})")
-        return True  # 👉 SOLO aquí envías mail
+        return True  # 👉 SOLO aquí se envía email
 
     except Exception as e:
         error_str = str(e).lower()
 
-        if "duplicate key" in error_str or "unique constraint" in error_str:
-            log(f"🔁 Ya existía (hash duplicado) ({name})")
+        if "duplicate" in error_str:
+            log(f"🔁 Ya existía ({name})")
             return False
 
         log(f"🔴 Error DB ({name}): {e}")
         return False
-    
+
 # ---------------- EMAIL ----------------
 def send_email(post, user, name):
     cuerpo = f"""
