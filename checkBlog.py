@@ -40,8 +40,14 @@ def get_supabase():
         raise Exception("Faltan variables de Supabase")
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
+def normalize_text(text):
+    return " ".join(text.strip().lower().split())
+
 def generate_hash(post, user):
-    raw = f"{user}-{post['fecha_autor']}-{post['contenido'][:100]}"
+    fecha = normalize_text(post["fecha_autor"])
+    contenido = normalize_text(post["contenido"])
+
+    raw = f"{user}-{fecha}-{contenido}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 # ---------------- LOGIN ----------------
