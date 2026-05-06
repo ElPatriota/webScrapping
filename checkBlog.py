@@ -42,14 +42,11 @@ def get_supabase():
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def normalize_fecha(fecha):
-    fecha = fecha.lower().strip()
-    fecha = re.sub(r"\s+", " ", fecha)
-    return fecha
+    return " ".join(fecha.strip().split())
 
 def generate_hash(post, user):
     fecha = normalize_fecha(post["fecha_autor"])
-    raw = f"{user}-{fecha}"
-    return hashlib.sha256(raw.encode()).hexdigest()
+    return hashlib.sha256(f"{user}-{fecha}".encode()).hexdigest()
 
 # ---------------- LOGIN ----------------
 def get_session(user, password):
@@ -165,7 +162,7 @@ def main():
     for u in users:
         user = u["user"]
         password = u["pass"]
-        name = u.get("name", user)
+        name = u.get("name") or user
 
         log(f"\n👤 Procesando: {name}")
 
