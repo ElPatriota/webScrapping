@@ -94,31 +94,33 @@ def get_latest_post(session):
 
 # ---------------- DB ----------------
 def save_post(supabase, post, user, name):
+    hash_value = generate_hash(post, user)
+
+    # 1. 🔍 Verificar si ya existe
+    existing = supabase.table("blog_monitor") \
+        .select("id") \
+        .eq("hash", hash_value) \
+        .limit(1) \
+        .execute()
+
+    if existing.data:
+        log(f"🔁 Ya existe en DB ({name})")
+        return False
+
+    # 2. 💾 Insertar si NO existe
     post_data = {
         "fecha_autor": post["fecha_autor"],
         "contenido": post["contenido"],
         "link": post["link"],
         "blog_user": user,
-        "hash": generate_hash(post, user)
+        "blog_name": name,  # asegúrate que exista en DB
+        "hash": hash_value
     }
 
-    # SOLO si agregaste la columna
-    post_data["blog_name"] = name
-
     try:
-        response = supabase.table("blog_monitor") \
-            .upsert(post_data, on_conflict="hash") \
-            .execute()
-
-        log(f"📦 Supabase response: {response}")
-
-        # 🔥 FIX: detectar insert real
-        if response.data:
-            log(f"💾 Insertado nuevo post ({name})")
-            return True
-        else:
-            log(f"🔁 Ya existía (hash duplicado) ({name})")
-            return False
+        supabase.table("blog_monitor").insert(post_data).execute()
+        log(f"💾 Insertado nuevo post ({name})")
+        return True
 
     except Exception as e:
         log(f"🔴 Error DB ({name}): {e}")
